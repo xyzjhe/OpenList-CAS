@@ -44,6 +44,7 @@ type Cloud189PC struct {
 	storageConfig driver.Config
 	ref           *Cloud189PC
 	cron          *cron.Cron
+	autoRestoreCron *cron.Cron
 }
 
 func (y *Cloud189PC) Config() driver.Config {
@@ -132,8 +133,9 @@ func (y *Cloud189PC) Init(ctx context.Context) (err error) {
 		}
 	})
 	y.debounceClean = y.newDebounceCleaner()
-	if y.AutoRestoreExistingCAS && strings.TrimSpace(y.AutoRestoreExistingCASPaths) != "" && y.cron != nil {
-		y.cron.Do(func() {
+	if y.AutoRestoreExistingCAS && strings.TrimSpace(y.AutoRestoreExistingCASPaths) != "" {
+		y.autoRestoreCron = cron.NewCron(y.autoRestoreInterval())
+		y.autoRestoreCron.Do(func() {
 			if err := y.autoRestoreCAS(context.TODO()); err != nil {
 				utils.Log.Errorf("autoRestoreCASError:%s", err)
 			}
@@ -163,7 +165,19 @@ func (y *Cloud189PC) Drop(ctx context.Context) error {
 		y.cron.Stop()
 		y.cron = nil
 	}
+	if y.autoRestoreCron != nil {
+		y.autoRestoreCron.Stop()
+		y.autoRestoreCron = nil
+	}
 	return nil
+}
+
+func (y *Cloud189PC) autoRestoreInterval() time.Duration {
+	minutes := y.GetStorage().CacheExpiration
+	if minutes <= 0 {
+		minutes = 30
+	}
+	return time.Duration(minutes) * time.Minute
 }
 
 func (y *Cloud189PC) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
