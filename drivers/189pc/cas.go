@@ -16,6 +16,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
@@ -177,8 +178,32 @@ func deriveCASRestoreName(casName, originalName string) string {
 	return baseName + ext
 }
 
+func resolveCASRestoreName(casName string, info *casUploadInfo) (string, error) {
+	if info == nil {
+		return "", fmt.Errorf("cas restore failed: missing cas payload")
+	}
+	if !isCASName(casName) {
+		return "", fmt.Errorf("cas restore failed: current file name %q does not end with .cas", casName)
+	}
+	trimmedName := strings.TrimSpace(strings.TrimSuffix(casName, path.Ext(casName)))
+	if trimmedName == "" {
+		return "", fmt.Errorf("cas restore failed: current .cas file name %q has an empty source file name", casName)
+	}
+	restoreName := strings.TrimSpace(deriveCASRestoreName(casName, info.Name))
+	if restoreName == "" {
+		return "", fmt.Errorf("cas restore failed: current .cas file name %q has an empty source file name", casName)
+	}
+	if strings.ContainsAny(restoreName, `/\`) {
+		return "", fmt.Errorf("cas restore failed: source file name %q contains a path", restoreName)
+	}
+	return restoreName, nil
+}
+
 func (y *Cloud189PC) restoreCAS(ctx context.Context, dstDir model.Obj, info *casUploadInfo, casName string, temp bool) (model.Obj, error) {
-	targetName := deriveCASRestoreName(casName, info.Name)
+	targetName, err := resolveCASRestoreName(casName, info)
+	if err != nil {
+		return nil, err
+	}
 	if temp {
 		targetName = fmt.Sprintf("TEMP_%d_%s_%s", time.Now().UnixNano()/1e6, uuid.NewString()[:5], targetName)
 	}
@@ -274,7 +299,10 @@ func (y *Cloud189PC) CASPreviewName(ctx context.Context, file model.Obj) (string
 	if err != nil {
 		return "", err
 	}
-	previewName := deriveCASRestoreName(file.GetName(), info.Name)
+	previewName, err := resolveCASRestoreName(file.GetName(), info)
+	if err != nil {
+		return "", err
+	}
 	if !isVideoName(previewName) {
 		return file.GetName(), nil
 	}
@@ -408,8 +436,17 @@ func (y *Cloud189PC) findFolderByName(ctx context.Context, searchName string, fo
 			return nil, err
 		}
 		if resp.FileListAO.Count == 0 {
-			return nil, errs.ObjectNotFound
-		}
+	return nil, errs.ObjectNotFound
+}
+
+func (y *Cloud189PC) beginAutoRestore(path string) bool {
+	_, loaded := y.autoRestoreInFlight.LoadOrStore(path, struct{}{})
+	return !loaded
+}
+
+func (y *Cloud189PC) endAutoRestore(path string) {
+	y.autoRestoreInFlight.Delete(path)
+}
 		for i := 0; i < len(resp.FileListAO.FolderList); i++ {
 			folder := resp.FileListAO.FolderList[i]
 			if folder.Name == searchName {
@@ -561,21 +598,21 @@ func (y *Cloud189PC) autoRestoreCAS(ctx context.Context) error {
 			utils.Log.Errorf("autoRestoreCASPathError:%s:%s", p, err)
 			continue
 		}
-		if err = y.restoreCASInDir(ctx, dir); err != nil {
+		if err = y.restoreCASInDir(ctx, dir, utils.FixAndCleanPath(p)); err != nil {
 			utils.Log.Errorf("autoRestoreCASDirError:%s:%s", p, err)
 		}
 	}
 	return nil
 }
 
-func (y *Cloud189PC) restoreCASInDir(ctx context.Context, dir model.Obj) error {
+func (y *Cloud189PC) restoreCASInDir(ctx context.Context, dir model.Obj, dirPath string) error {
 	files, err := y.getFiles(ctx, dir.GetID(), y.isFamily())
 	if err != nil {
 		return err
 	}
 	for _, obj := range files {
 		if obj.IsDir() {
-			if err := y.restoreCASInDir(ctx, obj); err != nil {
+			if err := y.restoreCASInDir(ctx, obj, path.Join(dirPath, obj.GetName())); err != nil {
 				utils.Log.Errorf("autoRestoreCASSubDirError:%s:%s", obj.GetName(), err)
 			}
 			continue
@@ -583,25 +620,46 @@ func (y *Cloud189PC) restoreCASInDir(ctx context.Context, dir model.Obj) error {
 		if !isCASName(obj.GetName()) {
 			continue
 		}
-		info, err := y.parseCASFromObj(ctx, obj)
-		if err != nil {
-			utils.Log.Errorf("autoRestoreCASParseError:%s:%s", obj.GetName(), err)
+		casPath := path.Join(dirPath, obj.GetName())
+		if !y.beginAutoRestore(casPath) {
 			continue
 		}
-		restoredName := deriveCASRestoreName(obj.GetName(), info.Name)
-		if _, err = y.findFileByName(ctx, restoredName, dir.GetID(), y.isFamily()); err == nil {
-			continue
-		}
-		if _, err = y.restoreCAS(ctx, dir, info, obj.GetName(), false); err != nil {
-			utils.Log.Errorf("autoRestoreCASError:%s:%s", obj.GetName(), err)
-			continue
-		}
-		if y.DeleteCASAfterRestore {
-			if err = y.Delete(ctx, IF(y.isFamily(), y.FamilyID, ""), obj); err != nil {
-				utils.Log.Errorf("autoRestoreCASDeleteError:%s:%s", obj.GetName(), err)
+		func() {
+			defer y.endAutoRestore(casPath)
+			info, err := y.parseCASFromObj(ctx, obj)
+			if err != nil {
+				utils.Log.Errorf("autoRestoreCASParseError:%s:%s", obj.GetName(), err)
+				return
 			}
-		}
-		y.notifyTaskDone()
+			restoredName, err := resolveCASRestoreName(obj.GetName(), info)
+			if err != nil {
+				utils.Log.Errorf("autoRestoreCASNameError:%s:%s", obj.GetName(), err)
+				return
+			}
+			if _, err = y.findFileByName(ctx, restoredName, dir.GetID(), y.isFamily()); err == nil {
+				if y.DeleteCASAfterRestore {
+					if err = y.Delete(ctx, IF(y.isFamily(), y.FamilyID, ""), obj); err != nil {
+						utils.Log.Errorf("autoRestoreCASDeleteExistingError:%s:%s", obj.GetName(), err)
+						return
+					}
+					op.Cache.DeleteDirectory(y, dirPath)
+					y.notifyTaskDone()
+				}
+				return
+			}
+			if _, err = y.restoreCAS(ctx, dir, info, obj.GetName(), false); err != nil {
+				utils.Log.Errorf("autoRestoreCASError:%s:%s", obj.GetName(), err)
+				return
+			}
+			if y.DeleteCASAfterRestore {
+				if err = y.Delete(ctx, IF(y.isFamily(), y.FamilyID, ""), obj); err != nil {
+					utils.Log.Errorf("autoRestoreCASDeleteError:%s:%s", obj.GetName(), err)
+					return
+				}
+				op.Cache.DeleteDirectory(y, dirPath)
+			}
+			y.notifyTaskDone()
+		}()
 	}
 	return nil
 }

@@ -40,6 +40,7 @@ type Cloud189PC struct {
 	cleanupActive           int
 	cleanupFamilyObjs       []model.Obj
 	autoRestoreMu           sync.Mutex
+	autoRestoreInFlight     sync.Map
 
 	storageConfig driver.Config
 	ref           *Cloud189PC

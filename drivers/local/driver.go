@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -411,16 +412,33 @@ func (d *Local) Put(ctx context.Context, dstDir model.Obj, stream model.FileStre
 	if err != nil {
 		return err
 	}
+	closed := false
 	defer func() {
-		_ = out.Close()
+		if !closed {
+			_ = out.Close()
+		}
 		if errors.Is(err, context.Canceled) {
 			_ = os.Remove(fullPath)
 		}
 	}()
-	err = utils.CopyWithCtx(ctx, out, stream, stream.GetSize(), up)
+
+	var info *localCASInfo
+	if d.shouldUploadCAS(stream.GetName()) {
+		casHasher := newLocalCASHasherWriter()
+		err = utils.CopyWithCtx(ctx, io.MultiWriter(out, casHasher), stream, stream.GetSize(), up)
+		if err == nil {
+			info = casHasher.Info(stream.GetName())
+		}
+	} else {
+		err = utils.CopyWithCtx(ctx, out, stream, stream.GetSize(), up)
+	}
 	if err != nil {
 		return err
 	}
+	if err = out.Close(); err != nil {
+		return err
+	}
+	closed = true
 	err = os.Chtimes(fullPath, stream.ModTime(), stream.ModTime())
 	if err != nil {
 		log.Errorf("[local] failed to change time of %s: %s", fullPath, err)
@@ -430,14 +448,10 @@ func (d *Local) Put(ctx context.Context, dstDir model.Obj, stream model.FileStre
 		d.directoryMap.UpdateDirParents(dstDir.GetPath())
 	}
 
-	srcObj := &model.Object{
-		Path:     fullPath,
-		Name:     stream.GetName(),
-		Size:     stream.GetSize(),
-		Modified: stream.ModTime(),
-		Ctime:    stream.ModTime(),
+	if err = d.uploadCAS(ctx, dstDir, info); err != nil {
+		return err
 	}
-	return d.uploadCAS(ctx, dstDir, srcObj)
+	return d.deleteSource(ctx, fullPath, info)
 }
 
 func (d *Local) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
