@@ -248,9 +248,9 @@ func (y *Cloud189PC) restoreCASDirect(ctx context.Context, dstDir model.Obj, inf
 		"parentFolderId": dstDir.GetID(),
 		"fileName":       url.QueryEscape(info.Name),
 		"fileSize":       fmt.Sprint(info.Size),
-		"fileMd5":        info.MD5,
+		"fileMd5":        strings.ToUpper(info.MD5),
 		"sliceSize":      fmt.Sprint(sliceSize),
-		"sliceMd5":       info.SliceMD5,
+		"sliceMd5":       strings.ToUpper(info.SliceMD5),
 	}
 	if isFamily {
 		params.Set("familyId", y.FamilyID)
@@ -436,7 +436,15 @@ func (y *Cloud189PC) findFolderByName(ctx context.Context, searchName string, fo
 			return nil, err
 		}
 		if resp.FileListAO.Count == 0 {
-	return nil, errs.ObjectNotFound
+			return nil, errs.ObjectNotFound
+		}
+		for i := 0; i < len(resp.FileListAO.FolderList); i++ {
+			folder := resp.FileListAO.FolderList[i]
+			if folder.Name == searchName {
+				return &folder, nil
+			}
+		}
+	}
 }
 
 func (y *Cloud189PC) beginAutoRestore(path string) bool {
@@ -446,14 +454,6 @@ func (y *Cloud189PC) beginAutoRestore(path string) bool {
 
 func (y *Cloud189PC) endAutoRestore(path string) {
 	y.autoRestoreInFlight.Delete(path)
-}
-		for i := 0; i < len(resp.FileListAO.FolderList); i++ {
-			folder := resp.FileListAO.FolderList[i]
-			if folder.Name == searchName {
-				return &folder, nil
-			}
-		}
-	}
 }
 
 func (y *Cloud189PC) findFamilyTransferFolder(ctx context.Context) (*Cloud189Folder, error) {
