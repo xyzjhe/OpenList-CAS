@@ -114,12 +114,18 @@ func Proxy(c *gin.Context) {
 }
 
 func shouldPreviewCASOnDown(c *gin.Context) bool {
-	switch strings.ToLower(c.Query("type")) {
-	case "cas_video":
+	if c.Query("type") != "" {
 		return true
-	default:
-		return false
 	}
+	if c.GetHeader("Range") != "" {
+		return true
+	}
+	switch strings.ToLower(c.GetHeader("Sec-Fetch-Dest")) {
+	case "video", "audio":
+		return true
+	}
+	accept := strings.ToLower(c.GetHeader("Accept"))
+	return strings.Contains(accept, "video/") || strings.Contains(accept, "audio/")
 }
 
 func linkCASPreview(c *gin.Context, rawPath string, storage driver.Driver, args model.LinkArgs) (*model.Link, model.Obj, bool, error) {
