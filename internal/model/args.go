@@ -12,6 +12,7 @@ import (
 
 type ListArgs struct {
 	ReqPath            string
+	ActualPath         string
 	S3ShowPlaceholder  bool
 	Refresh            bool
 	WithStorageDetails bool

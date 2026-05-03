@@ -57,6 +57,9 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 		if !dir.IsDir() {
 			return nil, errors.WithStack(errs.NotFolder)
 		}
+		if args.ActualPath == "" {
+			args.ActualPath = path
+		}
 		files, err := storage.List(ctx, dir, args)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to list objs")

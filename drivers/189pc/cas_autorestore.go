@@ -43,6 +43,50 @@ func (y *Cloud189PC) autoRestoreCAS(ctx context.Context) error {
 	return nil
 }
 
+func (y *Cloud189PC) manualRefreshAutoRestorePath(args model.ListArgs) (string, bool) {
+	if !args.Refresh || args.ReqPath == "" || !y.AutoRestoreExistingCAS || strings.TrimSpace(y.AutoRestoreExistingCASPaths) == "" {
+		return "", false
+	}
+	dirPath := strings.TrimSpace(args.ActualPath)
+	if dirPath == "" {
+		return "", false
+	}
+	dirPath = utils.FixAndCleanPath(dirPath)
+	if y.autoRestorePathMonitored(dirPath) {
+		return dirPath, true
+	}
+	return "", false
+}
+
+func (y *Cloud189PC) autoRestorePathMonitored(dirPath string) bool {
+	dirPath = utils.FixAndCleanPath(dirPath)
+	for _, p := range strings.Split(y.AutoRestoreExistingCASPaths, "\n") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		monitorPath := utils.FixAndCleanPath(p)
+		if monitorPath == "/" || dirPath == monitorPath || strings.HasPrefix(dirPath, strings.TrimSuffix(monitorPath, "/")+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func (y *Cloud189PC) restoreCASInCurrentDir(ctx context.Context, dir model.Obj, dirPath string) error {
+	files, err := y.getFiles(ctx, dir.GetID(), y.isFamily())
+	if err != nil {
+		return err
+	}
+	for _, obj := range files {
+		if obj.IsDir() || !isCASName(obj.GetName()) {
+			continue
+		}
+		y.restoreCASObj(ctx, dir, utils.FixAndCleanPath(dirPath), obj)
+	}
+	return nil
+}
+
 func (y *Cloud189PC) restoreCASInDir(ctx context.Context, dir model.Obj, dirPath string) error {
 	files, err := y.getFiles(ctx, dir.GetID(), y.isFamily())
 	if err != nil {
@@ -58,51 +102,53 @@ func (y *Cloud189PC) restoreCASInDir(ctx context.Context, dir model.Obj, dirPath
 		if !isCASName(obj.GetName()) {
 			continue
 		}
-		casPath := path.Join(dirPath, obj.GetName())
-		if !y.beginAutoRestore(casPath) {
-			continue
-		}
-		func() {
-			defer y.endAutoRestore(casPath)
-			info, err := y.parseCASFromObj(ctx, obj)
-			if err != nil {
-				utils.Log.Errorf("autoRestoreCASParseError:%s:%s", obj.GetName(), err)
-				return
-			}
-			restoredName, err := resolveCASRestoreName(obj.GetName(), info)
-			if err != nil {
-				utils.Log.Errorf("autoRestoreCASNameError:%s:%s", obj.GetName(), err)
-				return
-			}
-			if !casmeta.ExtAllowed(restoredName, y.CASExtAllowlist) {
-				return
-			}
-			if _, err = y.findFileByName(ctx, restoredName, dir.GetID(), y.isFamily()); err == nil {
-				if y.DeleteCASAfterRestore {
-					if err = y.Delete(ctx, IF(y.isFamily(), y.FamilyID, ""), obj); err != nil {
-						utils.Log.Errorf("autoRestoreCASDeleteExistingError:%s:%s", obj.GetName(), err)
-						return
-					}
-					op.Cache.DeleteDirectory(y, dirPath)
-					y.notifyTaskDone()
-				}
-				return
-			}
-			if _, err = y.restoreCAS(ctx, dir, info, obj.GetName(), false); err != nil {
-				utils.Log.Errorf("autoRestoreCASError:%s:%s", obj.GetName(), err)
-				return
-			}
-			if y.DeleteCASAfterRestore {
-				if err = y.Delete(ctx, IF(y.isFamily(), y.FamilyID, ""), obj); err != nil {
-					utils.Log.Errorf("autoRestoreCASDeleteError:%s:%s", obj.GetName(), err)
-					return
-				}
-				op.Cache.DeleteDirectory(y, dirPath)
-			}
-			y.notifyTaskDone()
-		}()
+		y.restoreCASObj(ctx, dir, dirPath, obj)
 	}
 	return nil
+}
+
+func (y *Cloud189PC) restoreCASObj(ctx context.Context, dir model.Obj, dirPath string, obj model.Obj) {
+	casPath := path.Join(dirPath, obj.GetName())
+	if !y.beginAutoRestore(casPath) {
+		return
+	}
+	defer y.endAutoRestore(casPath)
+	info, err := y.parseCASFromObj(ctx, obj)
+	if err != nil {
+		utils.Log.Errorf("autoRestoreCASParseError:%s:%s", obj.GetName(), err)
+		return
+	}
+	restoredName, err := resolveCASRestoreName(obj.GetName(), info)
+	if err != nil {
+		utils.Log.Errorf("autoRestoreCASNameError:%s:%s", obj.GetName(), err)
+		return
+	}
+	if !casmeta.ExtAllowed(restoredName, y.CASExtAllowlist) {
+		return
+	}
+	if _, err = y.findFileByName(ctx, restoredName, dir.GetID(), y.isFamily()); err == nil {
+		if y.DeleteCASAfterRestore {
+			if err = y.Delete(ctx, IF(y.isFamily(), y.FamilyID, ""), obj); err != nil {
+				utils.Log.Errorf("autoRestoreCASDeleteExistingError:%s:%s", obj.GetName(), err)
+				return
+			}
+			op.Cache.DeleteDirectory(y, dirPath)
+			y.notifyTaskDone()
+		}
+		return
+	}
+	if _, err = y.restoreCAS(ctx, dir, info, obj.GetName(), false); err != nil {
+		utils.Log.Errorf("autoRestoreCASError:%s:%s", obj.GetName(), err)
+		return
+	}
+	if y.DeleteCASAfterRestore {
+		if err = y.Delete(ctx, IF(y.isFamily(), y.FamilyID, ""), obj); err != nil {
+			utils.Log.Errorf("autoRestoreCASDeleteError:%s:%s", obj.GetName(), err)
+			return
+		}
+		op.Cache.DeleteDirectory(y, dirPath)
+	}
+	y.notifyTaskDone()
 }
 
 func (y *Cloud189PC) getDirByPath(ctx context.Context, dirPath string, isFamily bool) (model.Obj, error) {

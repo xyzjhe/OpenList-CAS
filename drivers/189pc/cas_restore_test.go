@@ -3,6 +3,8 @@ package _189pc
 import (
 	"strings"
 	"testing"
+
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
 )
 
 func TestResolveCASRestoreName(t *testing.T) {
@@ -52,5 +54,36 @@ func TestAutoRestoreInFlight(t *testing.T) {
 	driver.endAutoRestore(path)
 	if !driver.beginAutoRestore(path) {
 		t.Fatal("expected beginAutoRestore to start after endAutoRestore")
+	}
+}
+
+func TestManualRefreshAutoRestorePath(t *testing.T) {
+	driver := &Cloud189PC{
+		Addition: Addition{
+			AutoRestoreExistingCAS:      true,
+			AutoRestoreExistingCASPaths: "/movies\n/docs",
+		},
+	}
+	tests := []struct {
+		name string
+		args model.ListArgs
+		want string
+		ok   bool
+	}{
+		{name: "monitor root", args: model.ListArgs{ReqPath: "/189pc/movies", Refresh: true, ActualPath: "/movies"}, want: "/movies", ok: true},
+		{name: "monitor child", args: model.ListArgs{ReqPath: "/189pc/movies/action", Refresh: true, ActualPath: "/movies/action"}, want: "/movies/action", ok: true},
+		{name: "prefix is not child", args: model.ListArgs{ReqPath: "/189pc/movies-old", Refresh: true, ActualPath: "/movies-old"}, ok: false},
+		{name: "outside monitor", args: model.ListArgs{ReqPath: "/189pc/music", Refresh: true, ActualPath: "/music"}, ok: false},
+		{name: "not refresh", args: model.ListArgs{ReqPath: "/189pc/movies", ActualPath: "/movies"}, ok: false},
+		{name: "missing req path", args: model.ListArgs{Refresh: true, ActualPath: "/movies"}, ok: false},
+		{name: "missing actual path", args: model.ListArgs{ReqPath: "/189pc/movies", Refresh: true}, ok: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := driver.manualRefreshAutoRestorePath(tt.args)
+			if ok != tt.ok || got != tt.want {
+				t.Fatalf("got (%q, %v), want (%q, %v)", got, ok, tt.want, tt.ok)
+			}
+		})
 	}
 }
