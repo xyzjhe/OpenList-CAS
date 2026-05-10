@@ -31,7 +31,7 @@ func Down(c *gin.Context) {
 		common.ErrorPage(c, err, 500)
 		return
 	}
-	if shouldPreviewCASOnDown(c) {
+	if shouldPreviewCASOnDown(c) || isCASFile(filename) {
 		link, file, ok, previewErr := linkCASPreview(c, rawPath, storage, model.LinkArgs{
 			IP:       c.ClientIP(),
 			Header:   c.Request.Header,
@@ -77,7 +77,7 @@ func Proxy(c *gin.Context) {
 		common.ErrorPage(c, err, 500)
 		return
 	}
-	if shouldPreviewCASOnDown(c) {
+	if shouldPreviewCASOnDown(c) || isCASFile(filename) {
 		link, file, ok, previewErr := linkCASPreview(c, rawPath, storage, model.LinkArgs{
 			Header: c.Request.Header,
 			Type:   c.Query("type"),
@@ -111,6 +111,10 @@ func Proxy(c *gin.Context) {
 		common.ErrorPage(c, errors.New("proxy not allowed"), 403)
 		return
 	}
+}
+
+func isCASFile(filename string) bool {
+	return strings.HasSuffix(strings.ToLower(filename), ".cas")
 }
 
 func shouldPreviewCASOnDown(c *gin.Context) bool {

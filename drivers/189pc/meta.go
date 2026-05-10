@@ -28,6 +28,7 @@ type Addition struct {
 	AutoRestoreExistingCAS      bool   `json:"auto_restore_existing_cas" help:"Automatically scan monitored directories and restore .cas files"`
 	AutoRestoreExistingCASPaths string `json:"auto_restore_existing_cas_paths" type:"text" help:"One path per line; monitors these directories and subdirectories only. Empty means disabled"`
 	CASExtAllowlist             string `json:"cas_ext_allowlist" help:"CAS extension allowlist shared with Local. Empty means all extensions are allowed. Example: mp4,mkv,iso,zip"`
+	CASDownloadRestore          bool   `json:"cas_download_restore" help:"When enabled, downloading .cas files via /d/* will restore and return the real file instead of raw CAS metadata"`
 }
 
 var config = driver.Config{
