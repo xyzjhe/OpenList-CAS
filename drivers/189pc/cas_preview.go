@@ -40,7 +40,7 @@ func (y *Cloud189PC) CASPreviewName(ctx context.Context, file model.Obj) (string
 	if !casmeta.ExtAllowed(previewName, y.CASExtAllowlist) {
 		return file.GetName(), nil
 	}
-	if !y.CASDownloadRestore && !isVideoName(previewName) {
+	if !isVideoName(previewName) {
 		return file.GetName(), nil
 	}
 	return previewName, nil
@@ -55,10 +55,7 @@ func (y *Cloud189PC) linkCASVideo(ctx context.Context, file model.Obj, args mode
 	if err != nil {
 		return nil, err
 	}
-	if !casmeta.ExtAllowed(previewName, y.CASExtAllowlist) {
-		return y.Link(ctx, file, model.LinkArgs{IP: args.IP, Header: args.Header, Type: "raw_cas", Redirect: args.Redirect})
-	}
-	if !y.CASDownloadRestore && !isVideoName(previewName) {
+	if !casmeta.ExtAllowed(previewName, y.CASExtAllowlist) || !isVideoName(previewName) {
 		return y.Link(ctx, file, model.LinkArgs{IP: args.IP, Header: args.Header, Type: "raw_cas", Redirect: args.Redirect})
 	}
 	y.beginCleanupTask()
