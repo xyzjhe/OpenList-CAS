@@ -9,3 +9,7 @@ import (
 type CASPreviewNamer interface {
 	CASPreviewName(ctx context.Context, file model.Obj) (string, error)
 }
+
+type CASDownloadRestoreController interface {
+	CASDownloadRestoreEnabled() bool
+}

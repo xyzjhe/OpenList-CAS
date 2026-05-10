@@ -31,7 +31,7 @@ func Down(c *gin.Context) {
 		common.ErrorPage(c, err, 500)
 		return
 	}
-	if shouldPreviewCASOnDown(c) {
+	if shouldPreviewCASOnDown(c) || shouldRestoreCASOnDownload(storage, filename) {
 		link, file, ok, previewErr := linkCASPreview(c, rawPath, storage, model.LinkArgs{
 			IP:       c.ClientIP(),
 			Header:   c.Request.Header,
@@ -77,7 +77,7 @@ func Proxy(c *gin.Context) {
 		common.ErrorPage(c, err, 500)
 		return
 	}
-	if shouldPreviewCASOnDown(c) {
+	if shouldPreviewCASOnDown(c) || shouldRestoreCASOnDownload(storage, filename) {
 		link, file, ok, previewErr := linkCASPreview(c, rawPath, storage, model.LinkArgs{
 			Header: c.Request.Header,
 			Type:   c.Query("type"),
@@ -126,6 +126,18 @@ func shouldPreviewCASOnDown(c *gin.Context) bool {
 	}
 	accept := strings.ToLower(c.GetHeader("Accept"))
 	return strings.Contains(accept, "video/") || strings.Contains(accept, "audio/")
+}
+
+func isCASFile(filename string) bool {
+	return strings.HasSuffix(strings.ToLower(filename), ".cas")
+}
+
+func shouldRestoreCASOnDownload(storage driver.Driver, filename string) bool {
+	if !isCASFile(filename) {
+		return false
+	}
+	controller, ok := storage.(driver.CASDownloadRestoreController)
+	return ok && controller.CASDownloadRestoreEnabled()
 }
 
 func linkCASPreview(c *gin.Context, rawPath string, storage driver.Driver, args model.LinkArgs) (*model.Link, model.Obj, bool, error) {
