@@ -2,6 +2,7 @@ package _189pc
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -9,9 +10,14 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
+	"github.com/google/uuid"
 )
 
 const casTempDirName = "TEMP"
+
+func casTempSubDirName() string {
+	return fmt.Sprintf("TEMP_%d_%s", time.Now().UnixNano()/1e6, uuid.NewString()[:5])
+}
 
 func (y *Cloud189PC) ensureTempDir(ctx context.Context) (model.Obj, error) {
 	isFamily := y.isFamily()
@@ -40,6 +46,34 @@ func (y *Cloud189PC) ensureTempDir(ctx context.Context) (model.Obj, error) {
 			})
 		} else {
 			req.SetQueryParam("parentFolderId", y.RootFolderID)
+		}
+	}, &newFolder, isFamily)
+	if err != nil {
+		return nil, err
+	}
+	return &newFolder, nil
+}
+
+func (y *Cloud189PC) createTempSubDir(ctx context.Context, parentDir model.Obj, dirName string, isFamily bool) (model.Obj, error) {
+	fullUrl := API_URL
+	if isFamily {
+		fullUrl += "/family/file"
+	}
+	fullUrl += "/createFolder.action"
+	var newFolder Cloud189Folder
+	_, err := y.post(fullUrl, func(req *resty.Request) {
+		req.SetContext(ctx)
+		req.SetQueryParams(map[string]string{
+			"folderName":   dirName,
+			"relativePath": "",
+		})
+		if isFamily {
+			req.SetQueryParams(map[string]string{
+				"familyId": y.FamilyID,
+				"parentId": parentDir.GetID(),
+			})
+		} else {
+			req.SetQueryParam("parentFolderId", parentDir.GetID())
 		}
 	}, &newFolder, isFamily)
 	if err != nil {
@@ -183,7 +217,7 @@ func (y *Cloud189PC) cleanTempFolder(ctx context.Context) error {
 		return err
 	}
 	for _, obj := range files {
-		if obj.IsDir() || !strings.HasPrefix(obj.GetName(), "TEMP_") {
+		if !strings.HasPrefix(obj.GetName(), "TEMP_") {
 			continue
 		}
 		if err := y.Delete(ctx, IF(isFamily, y.FamilyID, ""), obj); err != nil {

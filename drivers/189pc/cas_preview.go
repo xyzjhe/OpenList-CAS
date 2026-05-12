@@ -66,25 +66,34 @@ func (y *Cloud189PC) linkCASVideo(ctx context.Context, file model.Obj, args mode
 		return y.Link(ctx, file, model.LinkArgs{IP: args.IP, Header: args.Header, Type: "raw_cas", Redirect: args.Redirect})
 	}
 	y.beginCleanupTask()
-	tempDir, err := y.ensureTempDir(ctx)
-	if err != nil {
-		y.endCleanupTask()
-		return nil, err
-	}
-	tempObj, err := y.restoreCAS(ctx, tempDir, info, file.GetName(), true)
+	tempRoot, err := y.ensureTempDir(ctx)
 	if err != nil {
 		y.endCleanupTask()
 		return nil, err
 	}
 	tempIsFamily := y.isFamily() || y.FamilyTransfer
+	tempDir, err := y.createTempSubDir(ctx, tempRoot, casTempSubDirName(), tempIsFamily)
+	if err != nil {
+		y.endCleanupTask()
+		return nil, err
+	}
+
+	restoreInfo := *info
+	restoreInfo.Name = previewName
+	tempObj, err := y.restoreCASDirect(ctx, tempDir, &restoreInfo, tempIsFamily, false)
+	if err != nil {
+		_ = y.Delete(context.TODO(), IF(tempIsFamily, y.FamilyID, ""), tempDir)
+		y.endCleanupTask()
+		return nil, err
+	}
 	link, err := y.linkObj(ctx, tempObj, model.LinkArgs{IP: args.IP, Header: args.Header, Type: "raw_video", Redirect: args.Redirect}, tempIsFamily)
 	if err != nil {
-		_ = y.Delete(context.TODO(), IF(tempIsFamily, y.FamilyID, ""), tempObj)
+		_ = y.Delete(context.TODO(), IF(tempIsFamily, y.FamilyID, ""), tempDir)
 		y.endCleanupTask()
 		return nil, err
 	}
 	go func() {
-		if err := y.Delete(context.TODO(), IF(tempIsFamily, y.FamilyID, ""), tempObj); err != nil {
+		if err := y.Delete(context.TODO(), IF(tempIsFamily, y.FamilyID, ""), tempDir); err != nil {
 			utils.Log.Errorf("casPlayTempDeleteError:%s", err)
 		}
 		y.endCleanupTask()
