@@ -294,6 +294,7 @@ http://localhost:5244
 ## 🔗 与上游项目
 
 - 上游项目：[OpenList](https://github.com/OpenListTeam/OpenList)
+- 上游项目：[openlist4.1.10](https://github.com/1307super/openlist4.1.10) 
 - 本项目为非官方增强分支
 
 ---
@@ -310,6 +311,7 @@ http://localhost:5244
 ## 📜 致谢 & 声明
 
 * 感谢原项目 [OpenList](https://github.com/OpenListTeam/OpenList) 提供的基础能力。
+* 感谢原魔改项目 [openlist4.1.10](https://github.com/1307super/openlist4.1.10) 提供的基础生成 `cas`文件能力。
 * 本项目为非官方增强分支
 
 ⚠️ **仅供学习研究，请遵守法律法规**
